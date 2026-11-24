@@ -1,0 +1,144 @@
+# ==============================================================================
+# AI Photo Studio (JetPack App) — .gitignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Node.js / TypeScript / Vite
+# ------------------------------------------------------------------------------
+node_modules/
+.vite/
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Built frontend & OCI distribution bundles (generated from src/ & app.toml)
+ui/
+dist/
+build/
+out/
+*.oci
+*.tar
+*.tar.gz
+*.zip
+
+# Package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# ------------------------------------------------------------------------------
+# Python / uv / Testing
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+*.dll
+
+# Virtual environments & uv state
+.venv/
+venv/
+env/
+ENV/
+.env/
+.uv/
+
+# Packaging
+*.egg-info/
+.eggs/
+*.egg
+
+# Test & linter caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ------------------------------------------------------------------------------
+# AI Model Weights, Runtime State & Sandbox Working Data
+# ------------------------------------------------------------------------------
+# Never commit downloaded AI weights or local runtime caches
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.onnx.data
+models/
+model_cache/
+hf_cache/
+torch_cache/
+
+# Local worker scratch / test working directories & IPC sockets
+app_home/
+working_dir/
+output/
+tmp/
+temp/
+run/
+*.sock
+*.socket
+
+# ------------------------------------------------------------------------------
+# Secrets, Certificates & Local Environment Overrides
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local.env
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.secret
+*.secrets
+
+# ------------------------------------------------------------------------------
+# IDEs & Editors
+# ------------------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.code-workspace
+
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# Operating System Metadata
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.fuse_hidden*
+.directory

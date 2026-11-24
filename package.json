@@ -1,0 +1,16 @@
+{
+  "name": "my-worker-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "codegen": "jetpack codegen --worker worker.py --out src/jetpack-env.d.ts"
+  },
+  "dependencies": {
+    "@jetpack/client": "file:../../jetpack/web/packages/jetpack-client"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,30 @@
+[package]
+id = "dev.codingbro.ai-photo-studio"
+name = "JetPack: AI Photo Studio"
+version = "0.1.0"
+description = "JetPack based Photo Studio: upscale, enhancing, resizing, background removing, batch processing tool."
+authors = ["Oleksandr Yudkin aka san4ezy"]
+license = "MIT"
+
+[hardware]
+min_ram_mb = 256
+min_vram_mb = 0
+min_disk_mb = 64
+accelerators = ["cpu", "metal"]
+architectures = ["darwin/arm64", "linux/amd64", "windows/amd64"]
+
+[python_env]
+python_version = "3.12"
+requirements = ["jetpack-sdk"]
+isolated = true
+
+[permissions]
+gpu_access = true
+filesystem_scopes = []
+network_allowlist = []
+
+[execution]
+entrypoint = "worker.py"
+args = []
+ipc_transport = "auto"
+graceful_shutdown_secs = 10

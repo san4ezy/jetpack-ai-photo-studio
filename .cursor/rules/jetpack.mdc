@@ -1,0 +1,13 @@
+---
+description: Mandatory JetPack architecture, binary framing, opcode parity, and app.toml rules for dev.codingbro.ai-photo-studio
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# JetPack Development Rules (dev.codingbro.ai-photo-studio)
+
+- **Connection Lifecycle**: Always use `JetPackAppClient.connectAndEnsureApp({ appId: "dev.codingbro.ai-photo-studio" })` from `@jetpack/client`. Never connect directly to Python workers or construct custom WebSocket handshakes.
+- **Zero-Copy Binary Framing**: Separate MsgPack metadata (`meta` object) from raw binary payloads (`Uint8Array`) in `client.request(opcode, meta, binaryPayload)`. Never base64-encode binary buffers inside `meta`.
+- **Opcode Parity**: Keep `worker.py` opcode strings and payload shapes synchronized with `JetPackOpcodeMap` (`src/jetpack-env.d.ts`). Run `jetpack codegen --worker worker.py --out src/jetpack-env.d.ts` after modifying handlers.
+- **Strict Manifest (`app.toml`)**: `app.toml` enforces `deny_unknown_fields`. Validate every edit with `jetpack validate app.toml` or the `validate_manifest` MCP tool. Never use `io.jetpack.*` IDs for local development, never hardcode host paths (use `[volumes.<name>]`), and never create symlinks in the project tree.
