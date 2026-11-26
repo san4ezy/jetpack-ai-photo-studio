@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Photo Studio — JetPack</title>
+</head>
+<body>
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <main class="studio-shell">
+    <section id="connection-banner" class="connection-banner glass-panel" hidden></section>
+
+    <div class="studio-workspace">
+      <!-- Left Panel: 1/3 Width Virtual Project Folder -->
+      <aside id="left-panel" class="left-panel glass-panel" aria-label="Робоча папка проєкту">
+        <header class="panel-header">
+          <div class="panel-title-wrap">
+            <h1 class="panel-title">Project Folder</h1>
+            <span id="accel-badge" class="badge badge-subtle">CPU</span>
+          </div>
+          <div class="panel-header-actions">
+            <button id="btn-import-folder" class="btn btn-ghost btn-xs" type="button" title="Імпортувати папку">
+              Folder
+            </button>
+            <button id="btn-select-cycle" class="btn btn-pill btn-xs" type="button">
+              Select
+            </button>
+          </div>
+        </header>
+
+        <input id="file-input-multi" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tiff,image/*" hidden />
+        <input id="file-input-folder" type="file" webkitdirectory multiple hidden />
+
+        <div id="dropzone-area" class="dropzone-area" tabindex="0" role="region" aria-label="Перетягніть зображення або натисніть для вибору">
+          <div id="file-list" class="file-list"></div>
+          <div id="empty-drop-hint" class="empty-drop-hint">
+            <div class="drop-icon" aria-hidden="true">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="4" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </div>
+            <div class="drop-title">Перетягніть зображення сюди</div>
+            <div class="drop-subtitle">або натисніть по порожньому місцю (PNG, JPG, WEBP, BMP, TIFF)</div>
+          </div>
+        </div>
+
+        <footer class="left-footer">
+          <span id="workspace-summary" class="muted-meta">0 файлів</span>
+          <button id="btn-add-files" class="btn btn-ghost btn-xs" type="button">+ Додати фото</button>
+        </footer>
+      </aside>
+
+      <!-- Right Panel: 2/3 Width Workspace -->
+      <section class="right-panel">
+        <!-- Top Horizontal Toolbar (150-200px height) -->
+        <header class="toolbar glass-panel" aria-label="Інструменти обробки">
+          <div id="tool-buttons" class="tool-buttons" role="tablist" aria-label="AI Інструменти">
+            <button class="tool-btn active" data-tool="upscale" type="button" role="tab" aria-selected="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+              <span>Upscale</span>
+            </button>
+            <button class="tool-btn" data-tool="enhance" type="button" role="tab" aria-selected="false">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M5 19l1-2.5L8.5 15.5 6 14.5 5 12l-1 2.5L1.5 15.5 4 16.5 5 19z"/></svg>
+              <span>Enhance</span>
+            </button>
+            <button class="tool-btn" data-tool="remove_bg" type="button" role="tab" aria-selected="false">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6v6H4z"/><path d="M14 14h6v6h-6z"/><path d="M14 4h6v6h-6z" stroke-dasharray="2 2"/><path d="M4 14h6v6H4z" stroke-dasharray="2 2"/></svg>
+              <span>Remove BG</span>
+            </button>
+            <button class="tool-btn" data-tool="blur_bg" type="button" role="tab" aria-selected="false">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="3.5"/><path d="M6.5 20a5.5 5.5 0 0 1 11 0"/><path d="M3 5h2M19 5h2M3 13h1.5M19.5 13H21" opacity="0.6"/></svg>
+              <span>Blur BG</span>
+            </button>
+            <button class="tool-btn" data-tool="resize" type="button" role="tab" aria-selected="false">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 12h6M12 9v6"/></svg>
+              <span>Resize</span>
+            </button>
+          </div>
+
+          <div class="toolbar-divider"></div>
+
+          <div id="tool-options" class="tool-options"></div>
+
+          <div class="toolbar-format">
+            <label class="field-label" for="select-file-type">File Type</label>
+            <select id="select-file-type" class="glass-select">
+              <option value="auto">Original</option>
+              <option value="png">PNG</option>
+              <option value="jpg">JPG</option>
+              <option value="webp">WEBP</option>
+            </select>
+          </div>
+
+          <div class="toolbar-actions">
+            <button id="btn-process" class="btn btn-primary" type="button" disabled>Process</button>
+            <button id="btn-process-all" class="btn btn-accent-soft" type="button" disabled>Process All</button>
+          </div>
+        </header>
+
+        <!-- Preview Canvas -->
+        <div id="preview-stage" class="preview-stage glass-panel">
+          <div id="canvas-content" class="canvas-content"></div>
+
+          <div id="progress-overlay" class="progress-overlay" hidden>
+            <div class="progress-card glass-panel">
+              <div class="progress-head">
+                <span id="progress-title">Processing...</span>
+                <span id="progress-percent">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="progress-bar" class="progress-fill" style="width: 0%;"></div>
+              </div>
+              <div id="progress-sub" class="progress-sub">Preparing worker...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom-Right Batch Result Controls -->
+        <footer class="workspace-footer">
+          <div id="status-line" class="status-line muted-meta">Готово до роботи</div>
+          <div class="batch-actions">
+            <button id="btn-restore-all" class="btn btn-ghost" type="button" disabled>Restore All</button>
+            <button id="btn-download-all" class="btn btn-primary" type="button" disabled>Download All</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

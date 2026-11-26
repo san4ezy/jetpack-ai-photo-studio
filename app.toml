@@ -2,26 +2,47 @@
 id = "dev.codingbro.ai-photo-studio"
 name = "JetPack: AI Photo Studio"
 version = "0.1.0"
-description = "JetPack based Photo Studio: upscale, enhancing, resizing, background removing, batch processing tool."
+description = "Autonomous local AI Photo Studio: Real-ESRGAN upscale, detail enhance, background removal, portrait blur, resize, and non-destructive batch pipeline."
 authors = ["Oleksandr Yudkin aka san4ezy"]
 license = "MIT"
 
 [hardware]
-min_ram_mb = 256
+min_ram_mb = 2048
 min_vram_mb = 0
-min_disk_mb = 64
-accelerators = ["cpu", "metal"]
+min_disk_mb = 1024
+accelerators = ["metal", "cuda", "cpu"]
 architectures = ["darwin/arm64", "linux/amd64", "windows/amd64"]
 
 [python_env]
 python_version = "3.12"
-requirements = ["jetpack-sdk"]
+requirements = [
+  "jetpack-sdk",
+  "pydantic",
+  "msgpack",
+  "pillow",
+  "numpy",
+  "spandrel",
+  "torch",
+  "torchvision",
+  "rembg[cpu]",
+  "onnxruntime",
+]
 isolated = true
+
+[python_env.backend_indexes]
+cuda = "https://download.pytorch.org/whl/cu124"
+cpu = "https://download.pytorch.org/whl/cpu"
 
 [permissions]
 gpu_access = true
+model_cache = true
 filesystem_scopes = []
-network_allowlist = []
+network_allowlist = [
+  "preset:huggingface",
+  "github.com:443",
+  "objects.githubusercontent.com:443",
+  "release-assets.githubusercontent.com:443",
+]
 
 [execution]
 entrypoint = "worker.py"

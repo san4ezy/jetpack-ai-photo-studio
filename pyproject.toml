@@ -1,9 +1,18 @@
 [project]
-name = "my-worker"
+name = "ai-photo-studio"
 version = "0.1.0"
-description = "JetPack sandboxed Python worker"
+description = "JetPack sandboxed Python worker for AI Photo Studio"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "jetpack-sdk",
+    "pydantic>=2.7",
+    "msgpack>=1.0",
+    "pillow>=10.3",
+    "numpy>=1.26",
+    "spandrel>=0.3",
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "rembg[cpu]>=2.0",
+    "onnxruntime>=1.17",
 ]

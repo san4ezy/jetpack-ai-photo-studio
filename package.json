@@ -1,16 +1,22 @@
 {
-  "name": "my-worker-web",
+  "name": "ai-photo-studio-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "codegen": "jetpack codegen --worker worker.py --out src/jetpack-env.d.ts"
+    "codegen": "jetpack codegen --worker worker.py --out src/jetpack-env.d.ts",
+    "test": "npx tsc src/codec.ts src/studio-controller.ts --outDir /tmp/ai-photo-studio-test --target ES2022 --module ESNext --moduleResolution bundler --skipLibCheck && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@jetpack/client": "file:../../jetpack/web/packages/jetpack-client"
+    "@jetpack/client": "file:../../jetpack/web/packages/jetpack-client",
+    "jetpack-wasm": "file:../../jetpack/web/src/wasm/pkg"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
   }
 }
