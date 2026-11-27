@@ -1,6 +1,6 @@
 ---
 name: add-binary-opcode
-description: Add a typed request/response or streaming binary opcode across worker.py, jetpack codegen, and @jetpack/client.
+description: Add a typed request/response or streaming binary opcode across worker.py, jetpack codegen, and @jetpack-desktop/client.
 ---
 
 # Add a Binary Opcode with Type Contract Parity
@@ -32,7 +32,7 @@ description: Add a typed request/response or streaming binary opcode across work
    jetpack codegen --worker worker.py --out src/jetpack-env.d.ts
    ```
 
-4. **Call from `@jetpack/client`**:
+4. **Call from `@jetpack-desktop/client`**:
    ```ts
    import { JetPackAppClient } from '@jetpack-desktop/client';
    import type { JetPackOpcodeMap } from './jetpack-env';

@@ -7,11 +7,11 @@ Read this file before editing any code in this repository.
 ## Mandatory Architectural Invariants
 
 1. **Always Connect via `JetPackAppClient.connectAndEnsureApp()`**:
-   - In browser/frontend TypeScript code, ALWAYS initialize connections using `JetPackAppClient` from `@jetpack/client` (`await client.connectAndEnsureApp({ appId: "dev.codingbro.ai-photo-studio", daemonPort: 9470 })`).
+   - In browser/frontend TypeScript code, ALWAYS initialize connections using `JetPackAppClient` from `@jetpack-desktop/client` (`await client.connectAndEnsureApp({ appId: "dev.codingbro.ai-photo-studio", daemonPort: 9470 })`).
    - NEVER open raw `WebSocket` connections directly to Python workers or bypass `jetpack://pair` Out-of-Band pairing. `jetpack-daemon` (`127.0.0.1:9470`) is the sole authenticated gatekeeper.
 
 2. **Strict Separation of MsgPack Metadata & Zero-Copy Binary Payloads**:
-   - Use `client.request(opcode, meta, binaryPayload)` where `meta` is a structured object (serialized as MsgPack by `jetpack-wasm`) and `binaryPayload` is a raw `Uint8Array` transferred zero-copy.
+   - Use `client.request(opcode, meta, binaryPayload)` where `meta` is a structured object (serialized as MsgPack by `@jetpack-desktop/client`'s bundled WASM engine) and `binaryPayload` is a raw `Uint8Array` transferred zero-copy.
    - NEVER JSON-stringify binary buffers (`base64`, `Array.from(bytes)`) inside `meta`, and NEVER send raw JSON over WebSockets.
 
 3. **Frontend-to-Worker Opcode Parity & Type Codegen**:

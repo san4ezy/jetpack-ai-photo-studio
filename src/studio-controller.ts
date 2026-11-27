@@ -1,4 +1,4 @@
-import type { JetPackAppClient } from '@jetpack/client';
+import type { JetPackAppClient } from '@jetpack-desktop/client';
 import {
   decodeEnvelope,
   isSupportedImageFilename,

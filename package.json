@@ -12,8 +12,7 @@
     "test": "npx tsc src/codec.ts src/studio-controller.ts --outDir /tmp/ai-photo-studio-test --target ES2022 --module ESNext --moduleResolution bundler --skipLibCheck && node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@jetpack-desktop/client": "^0.1.2-beta.2",
-    "jetpack-wasm": "file:../../jetpack/web/src/wasm/pkg"
+    "@jetpack-desktop/client": "^0.1.2-beta.2"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

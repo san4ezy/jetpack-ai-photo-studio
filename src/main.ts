@@ -1,5 +1,5 @@
 import './styles.css';
-import type { JetPackAppClient } from '@jetpack/client';
+import type { JetPackAppClient } from '@jetpack-desktop/client';
 import type { JetPackOpcodeMap, StudioFileEntry } from './jetpack-env';
 import {
   computeFitCanvasScale,

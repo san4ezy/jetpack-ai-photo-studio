@@ -1,11 +1,8 @@
-import * as wasmModule from 'jetpack-wasm';
-import wasmBinaryUrl from 'jetpack-wasm/jetpack_wasm_bg.wasm?url';
 import {
   JetPackAppClient,
   type AppPullProgress,
   type JetPackControlBarOptions,
-  type WasmBindingsAdapter,
-} from '@jetpack/client';
+} from '@jetpack-desktop/client';
 import type { JetPackOpcodeMap } from './jetpack-env';
 
 export * from './codec';
@@ -63,8 +60,6 @@ export async function connectStudioClient(options: {
     appId: STUDIO_APP_ID,
     daemonPort: endpoint.daemonPort,
     wsUrl: endpoint.wsUrl,
-    wasmModule: wasmModule as unknown as WasmBindingsAdapter,
-    wasmBinaryOrUrl: wasmBinaryUrl,
     controlBar,
     onPairingUri: options.onPairingUri,
     onProgress: options.onProgress,
