@@ -12,12 +12,6 @@ import threading
 import uuid
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-# Allow importing jetpack_sdk both from installed venv and monorepo dev checkout
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_SDK_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../jetpack/sdks/python"))
-if os.path.isdir(REPO_SDK_DIR) and REPO_SDK_DIR not in sys.path:
-    sys.path.insert(0, REPO_SDK_DIR)
-
 try:
     import msgpack as _msgpack  # type: ignore
 except ImportError:  # pragma: no cover - fallback used in minimal host unit tests

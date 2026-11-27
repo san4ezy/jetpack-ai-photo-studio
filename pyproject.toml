@@ -5,7 +5,7 @@ description = "JetPack sandboxed Python worker for AI Photo Studio"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "jetpack-sdk",
+    "jetpack-sdk==0.1.2b2",
     "pydantic>=2.7",
     "msgpack>=1.0",
     "pillow>=10.3",

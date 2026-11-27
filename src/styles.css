@@ -35,9 +35,11 @@
   padding: 0;
 }
 
-html,
+html {
+  min-height: 100%;
+}
+
 body {
-  height: 100%;
   min-height: 100vh;
   background: var(--bg-base);
   color: var(--text-primary);
@@ -86,8 +88,8 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: calc(100vh - 46px);
-  min-height: 600px;
+  height: calc(100vh - 49px - var(--jetpack-log-terminal-offset, 0px));
+  min-height: 460px;
 }
 
 .connection-banner {
@@ -1583,7 +1585,7 @@ input[type="range"] {
 @media (max-width: 1080px) {
   .studio-shell {
     height: auto;
-    min-height: 100vh;
+    min-height: calc(100vh - 49px - var(--jetpack-log-terminal-offset, 0px));
   }
   .studio-workspace {
     grid-template-columns: 1fr;
