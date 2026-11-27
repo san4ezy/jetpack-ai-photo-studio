@@ -67,6 +67,13 @@ class StudioFileEntry(BaseModel):
     thumb_offset: int
     thumb_length: int
     thumb_mime: str
+    dpi_x: Optional[float] = None
+    dpi_y: Optional[float] = None
+    color_mode: Optional[str] = None
+    source: str = "workspace"
+    output_dpi_x: Optional[float] = None
+    output_dpi_y: Optional[float] = None
+    output_color_mode: Optional[str] = None
 
 
 class StudioListFilesResult(BaseModel):
@@ -112,11 +119,17 @@ class StudioProcessParams(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     keep_aspect: Optional[bool] = None
+    fit_mode: Optional[Literal["contain", "cover", "stretch"]] = None
+    crop_mode: Optional[Literal["keep_aspect", "ratio", "custom"]] = None
+    crop_x: Optional[float] = None
+    crop_y: Optional[float] = None
+    crop_w: Optional[float] = None
+    crop_h: Optional[float] = None
 
 
 class StudioProcessMeta(BaseModel):
     filenames: List[str]
-    tool: Literal["upscale", "enhance", "remove_bg", "blur_bg", "resize"]
+    tool: Literal["upscale", "enhance", "remove_bg", "blur_bg", "crop", "resize"]
     params: Optional[StudioProcessParams] = None
     output_format: Literal["auto", "png", "jpg", "webp"] = "auto"
     job_id: Optional[str] = None
@@ -151,6 +164,12 @@ class StudioDownloadZipResult(BaseModel):
     filename: str
     file_count: int
     total_bytes: int
+
+
+class StudioOpenFolderResult(BaseModel):
+    opened: bool
+    path: str
+    message: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +541,16 @@ class PhotoStudioWorker:
             correlation_id=correlation_id,
         )
 
+    @opcode("studio.open_folder", request=None, response=StudioOpenFolderResult, binary=False)
+    def handle_open_folder(self, channel_id: int, correlation_id: Optional[int]) -> None:
+        result = self.pipeline.open_working_dir()
+        self._send_frame(
+            opcode="studio.open_folder.ok",
+            payload=encode_envelope(result),
+            channel_id=channel_id,
+            correlation_id=correlation_id,
+        )
+
     def dispatch(self, frame: Any) -> bool:
         opcode_name = frame.opcode
         channel_id = frame.channel_id
@@ -551,6 +580,10 @@ class PhotoStudioWorker:
 
             if opcode_name == "studio.download_zip":
                 self.handle_download_zip(channel_id, correlation_id)
+                return True
+
+            if opcode_name == "studio.open_folder":
+                self.handle_open_folder(channel_id, correlation_id)
                 return True
 
             if opcode_name in ("worker.ping", "app.ping"):
