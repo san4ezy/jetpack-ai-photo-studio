@@ -34,7 +34,7 @@ description: Add a typed request/response or streaming binary opcode across work
 
 4. **Call from `@jetpack/client`**:
    ```ts
-   import { JetPackAppClient } from '@jetpack/client';
+   import { JetPackAppClient } from '@jetpack-desktop/client';
    import type { JetPackOpcodeMap } from './jetpack-env';
 
    const client = new JetPackAppClient<JetPackOpcodeMap>();
