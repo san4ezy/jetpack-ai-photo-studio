@@ -138,6 +138,19 @@ class TestStudioPipeline(unittest.TestCase):
         self.assertTrue(by_name["photo.jpg"].is_processed)
         self.assertEqual(by_name["photo.jpg"].output_filename, "photo.png")
 
+    def test_rich_metadata_dpi_and_color_mode_extracted(self) -> None:
+        im = Image.new("RGB", (64, 48), (10, 20, 30))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG", dpi=(300, 300))
+        (self.work_dir / "print_ready.png").write_bytes(buf.getvalue())
+
+        rec = self.pipeline.process_file("print_ready.png", "resize", {"width": 32, "height": 24, "keep_aspect": False})
+        self.assertEqual(rec.color_mode, "RGB")
+        self.assertEqual(rec.source, "workspace")
+        self.assertAlmostEqual(rec.dpi_x or 0, 300.0, places=0)
+        self.assertAlmostEqual(rec.dpi_y or 0, 300.0, places=0)
+        self.assertEqual(rec.output_color_mode, "RGB")
+
     def test_non_destructive_chaining_and_format_replacement(self) -> None:
         orig_bytes = _make_jpg_bytes(40, 30)
         orig_path = self.work_dir / "portrait.jpg"
@@ -187,6 +200,162 @@ class TestStudioPipeline(unittest.TestCase):
         self.assertTrue(rec_blur.is_processed)
         rec_enh = self.pipeline.process_file("scene.png", "enhance", {})
         self.assertEqual((rec_enh.output_width, rec_enh.output_height), (48, 48))
+
+    def test_resize_cover_fit_mode_center_crops_proportionally(self) -> None:
+        # Image with green center stripe and red side bands: center-crop 40x20 -> 20x40 keeps center green
+        im = Image.new("RGB", (40, 20), (220, 20, 20))
+        for x in range(15, 25):
+            for y in range(20):
+                im.putpixel((x, y), (20, 220, 20))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        (self.work_dir / "wide.png").write_bytes(buf.getvalue())
+
+        rec = self.pipeline.process_file(
+            "wide.png",
+            "resize",
+            {"width": 20, "height": 40, "keep_aspect": False, "fit_mode": "cover"},
+        )
+        self.assertEqual((rec.output_width, rec.output_height), (20, 40))
+        with Image.open(self.work_dir / "output" / "wide.png") as out_im:
+            r, g, b = out_im.getpixel((10, 20))
+            self.assertGreater(g, 180)
+            self.assertLess(r, 60)
+
+        # Invalid fit_mode is rejected cleanly
+        with self.assertRaises(PipelineError):
+            self.pipeline.process_file(
+                "wide.png",
+                "resize",
+                {"width": 20, "height": 20, "fit_mode": "invalid"},
+            )
+
+    def test_resize_explicit_normalized_crop_rect_and_validation(self) -> None:
+        # Left third (x in 0..20) is blue; right two thirds are red
+        im = Image.new("RGB", (60, 20), (220, 40, 20))
+        for x in range(20):
+            for y in range(20):
+                im.putpixel((x, y), (20, 40, 220))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        (self.work_dir / "split.png").write_bytes(buf.getvalue())
+
+        rec = self.pipeline.process_file(
+            "split.png",
+            "resize",
+            {
+                "width": 40,
+                "height": 40,
+                "keep_aspect": False,
+                "fit_mode": "cover",
+                "crop_x": 0.0,
+                "crop_y": 0.0,
+                "crop_w": 1.0 / 3.0,
+                "crop_h": 1.0,
+            },
+        )
+        self.assertEqual((rec.output_width, rec.output_height), (40, 40))
+        with Image.open(self.work_dir / "output" / "split.png") as out_im:
+            r, g, b = out_im.getpixel((20, 20))
+            self.assertGreater(b, 180)
+            self.assertLess(r, 60)
+
+        # Partial or zero-size crop coordinates must fail cleanly
+        with self.assertRaises(PipelineError):
+            self.pipeline.process_file(
+                "split.png",
+                "resize",
+                {"width": 20, "height": 20, "fit_mode": "cover", "crop_x": 0.1},
+            )
+        with self.assertRaises(PipelineError):
+            self.pipeline.process_file(
+                "split.png",
+                "resize",
+                {
+                    "width": 20,
+                    "height": 20,
+                    "fit_mode": "cover",
+                    "crop_x": 0.0,
+                    "crop_y": 0.0,
+                    "crop_w": 0.0,
+                    "crop_h": 1.0,
+                },
+            )
+
+    def test_crop_cuts_exact_pixels_without_scaling_and_supports_batch_modes(self) -> None:
+        # 60x20 image: left third (0..20) blue, center (20..40) green, right (40..60) red
+        im = Image.new("RGB", (60, 20), (220, 40, 20))
+        for x in range(20):
+            for y in range(20):
+                im.putpixel((x, y), (20, 40, 220))
+        for x in range(20, 40):
+            for y in range(20):
+                im.putpixel((x, y), (20, 220, 40))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        (self.work_dir / "tri.png").write_bytes(buf.getvalue())
+
+        # 1. Explicit single-image crop region: output MUST be 20x20 (actual cropped size, NOT resized!)
+        rec_exact = self.pipeline.process_file(
+            "tri.png",
+            "crop",
+            {
+                "width": 20,
+                "height": 20,
+                "crop_mode": "ratio",
+                "crop_x": 0.0,
+                "crop_y": 0.0,
+                "crop_w": 1.0 / 3.0,
+                "crop_h": 1.0,
+            },
+        )
+        self.assertEqual((rec_exact.output_width, rec_exact.output_height), (20, 20))
+        with Image.open(self.work_dir / "output" / "tri.png") as out_im:
+            r, g, b = out_im.getpixel((10, 10))
+            self.assertGreater(b, 180)
+            self.assertLess(g, 60)
+
+        # Reset output and test batch ratio 1:1 (center 20x20 green square without scaling)
+        self.pipeline.restore_file("tri.png")
+        rec_ratio = self.pipeline.process_file(
+            "tri.png",
+            "crop",
+            {"width": 1080, "height": 1080, "crop_mode": "ratio"},
+        )
+        self.assertEqual((rec_ratio.output_width, rec_ratio.output_height), (20, 20))
+        with Image.open(self.work_dir / "output" / "tri.png") as out_im:
+            r, g, b = out_im.getpixel((10, 10))
+            self.assertGreater(g, 180)
+            self.assertLess(r, 60)
+
+        # Custom batch crop clamps to source bounds without scaling
+        self.pipeline.restore_file("tri.png")
+        rec_custom = self.pipeline.process_file(
+            "tri.png",
+            "crop",
+            {"width": 14, "height": 100, "crop_mode": "custom"},
+        )
+        self.assertEqual((rec_custom.output_width, rec_custom.output_height), (14, 20))
+
+    def test_resize_contain_vs_stretch_behavior(self) -> None:
+        (self.work_dir / "rect.png").write_bytes(_make_png_bytes(40, 20))
+
+        # Contain preserves aspect ratio inside 20x40 -> 20x10
+        rec_contain = self.pipeline.process_file(
+            "rect.png",
+            "resize",
+            {"width": 20, "height": 40, "keep_aspect": True, "fit_mode": "contain"},
+        )
+        self.assertEqual((rec_contain.output_width, rec_contain.output_height), (20, 10))
+
+        # Stretch forces exact 10x40 (intentional distortion in Resize: Custom)
+        self.pipeline.restore_file("rect.png")
+        rec_stretch = self.pipeline.process_file(
+            "rect.png",
+            "resize",
+            {"width": 10, "height": 40, "keep_aspect": False, "fit_mode": "stretch"},
+        )
+        self.assertEqual((rec_stretch.output_width, rec_stretch.output_height), (10, 40))
 
     def test_restore_and_restore_all_keep_originals(self) -> None:
         (self.work_dir / "a.png").write_bytes(_make_png_bytes())
@@ -353,6 +522,40 @@ class TestPhotoStudioWorker(unittest.TestCase):
         keep_running = self.worker.dispatch(_FakeFrame("app.terminate", b"", correlation_id=16))
         self.assertFalse(keep_running)
         self.assertEqual(self.client.sent[-1].opcode, "app.terminate.ok")
+
+    def test_worker_open_folder_opcode(self) -> None:
+        opened_paths: List[Path] = []
+        pipeline_ok = StudioPipeline(
+            working_dir=Path(self.tmp_dir.name) / "ws_open",
+            model_cache_dir=Path(self.tmp_dir.name) / "cache_open",
+            folder_opener=lambda p: opened_paths.append(p),
+        )
+        try:
+            client_ok = _FakeClient()
+            worker_ok = PhotoStudioWorker(client_ok, pipeline=pipeline_ok)
+            worker_ok.dispatch(_FakeFrame("studio.open_folder", b"", correlation_id=21))
+            self.assertEqual(client_ok.sent[-1].opcode, "studio.open_folder.ok")
+            meta, _ = _decode_envelope(client_ok.sent[-1].payload)
+            self.assertTrue(meta["opened"])
+            self.assertEqual(Path(meta["path"]), pipeline_ok.working_dir)
+            self.assertEqual(opened_paths, [pipeline_ok.working_dir])
+        finally:
+            pipeline_ok.close()
+
+        def _failing_opener(_p: Path) -> None:
+            raise OSError("desktop launcher unavailable")
+
+        pipeline_err = StudioPipeline(
+            working_dir=Path(self.tmp_dir.name) / "ws_open_err",
+            model_cache_dir=Path(self.tmp_dir.name) / "cache_open_err",
+            folder_opener=_failing_opener,
+        )
+        try:
+            res = pipeline_err.open_working_dir()
+            self.assertFalse(res["opened"])
+            self.assertIn("desktop launcher unavailable", res["message"])
+        finally:
+            pipeline_err.close()
 
 
 if __name__ == "__main__":

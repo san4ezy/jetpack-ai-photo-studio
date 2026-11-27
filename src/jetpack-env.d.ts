@@ -25,6 +25,13 @@ export interface StudioFileEntry {
   thumb_offset: number;
   thumb_length: number;
   thumb_mime: string;
+  dpi_x?: number | null;
+  dpi_y?: number | null;
+  color_mode?: string | null;
+  source?: string;
+  output_dpi_x?: number | null;
+  output_dpi_y?: number | null;
+  output_color_mode?: string | null;
 }
 
 export interface StudioGetImageMeta {
@@ -52,9 +59,15 @@ export interface StudioListFilesResult {
   files: StudioFileEntry[];
 }
 
+export interface StudioOpenFolderResult {
+  opened: boolean;
+  path: string;
+  message?: string | null;
+}
+
 export interface StudioProcessMeta {
   filenames: string[];
-  tool: "upscale" | "enhance" | "remove_bg" | "blur_bg" | "resize";
+  tool: "upscale" | "enhance" | "remove_bg" | "blur_bg" | "crop" | "resize";
   params?: StudioProcessParams | null;
   output_format?: "auto" | "png" | "jpg" | "webp";
   job_id?: string | null;
@@ -68,6 +81,12 @@ export interface StudioProcessParams {
   width?: number | null;
   height?: number | null;
   keep_aspect?: boolean | null;
+  fit_mode?: "contain" | "cover" | "stretch" | null;
+  crop_mode?: "keep_aspect" | "ratio" | "custom" | null;
+  crop_x?: number | null;
+  crop_y?: number | null;
+  crop_w?: number | null;
+  crop_h?: number | null;
 }
 
 export interface StudioProcessProgress {
@@ -121,6 +140,12 @@ export interface JetPackOpcodeMap {
   "studio.list_files": {
     meta: Record<string, unknown> | null;
     response: StudioListFilesResult;
+    binary: false;
+    stream: false;
+  };
+  "studio.open_folder": {
+    meta: Record<string, unknown> | null;
+    response: StudioOpenFolderResult;
     binary: false;
     stream: false;
   };

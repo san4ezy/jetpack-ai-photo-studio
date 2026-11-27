@@ -7,6 +7,7 @@ import io
 import os
 import re
 import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -55,7 +56,7 @@ SPANDREL_MODEL_SPECS: Dict[str, Dict[str, str]] = {
 }
 
 HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
-THUMBNAIL_MAX_SIZE = (160, 160)
+THUMBNAIL_MAX_SIZE = (240, 240)
 
 
 class PipelineError(ValueError):
@@ -80,6 +81,13 @@ class StudioFileRecord:
     output_height: Optional[int]
     thumbnail_bytes: bytes
     thumbnail_mime: str
+    dpi_x: Optional[float] = None
+    dpi_y: Optional[float] = None
+    color_mode: Optional[str] = None
+    source: str = "workspace"
+    output_dpi_x: Optional[float] = None
+    output_dpi_y: Optional[float] = None
+    output_color_mode: Optional[str] = None
 
     def to_metadata_dict(self, thumb_offset: int, thumb_length: int) -> Dict[str, Any]:
         return {
@@ -100,6 +108,13 @@ class StudioFileRecord:
             "thumb_offset": thumb_offset,
             "thumb_length": thumb_length,
             "thumb_mime": self.thumbnail_mime,
+            "dpi_x": self.dpi_x,
+            "dpi_y": self.dpi_y,
+            "color_mode": self.color_mode,
+            "source": self.source,
+            "output_dpi_x": self.output_dpi_x,
+            "output_dpi_y": self.output_dpi_y,
+            "output_color_mode": self.output_color_mode,
         }
 
 
@@ -285,6 +300,7 @@ class StudioPipeline:
         max_cpu_workers: Optional[int] = None,
         spandrel_runner: Optional[Callable[[Image.Image, str, Callable[[str, float], None]], Image.Image]] = None,
         rembg_runner: Optional[Callable[[Image.Image, bool, Callable[[str, float], None]], Image.Image]] = None,
+        folder_opener: Optional[Callable[[Path], None]] = None,
     ) -> None:
         self.working_dir = resolve_working_dir(working_dir)
         self.output_dir = self.working_dir / "output"
@@ -308,6 +324,7 @@ class StudioPipeline:
         self._rembg_providers: List[str] = []
         self._spandrel_runner = spandrel_runner
         self._rembg_runner = rembg_runner
+        self._folder_opener = folder_opener
 
     def close(self) -> None:
         self._cpu_pool.shutdown(wait=False, cancel_futures=False)
@@ -378,10 +395,31 @@ class StudioPipeline:
 
     # --- Workspace Operations ---
 
+    @staticmethod
+    def _extract_image_meta(im: Image.Image) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        color_mode = str(im.mode) if getattr(im, "mode", None) else None
+        raw_dpi = im.info.get("dpi") if isinstance(getattr(im, "info", None), dict) else None
+        dpi_x: Optional[float] = None
+        dpi_y: Optional[float] = None
+        if isinstance(raw_dpi, (tuple, list)) and len(raw_dpi) >= 2:
+            try:
+                x_val = float(raw_dpi[0])
+                y_val = float(raw_dpi[1])
+                if x_val > 0 and y_val > 0:
+                    dpi_x = round(x_val, 1)
+                    dpi_y = round(y_val, 1)
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(raw_dpi, (int, float)) and float(raw_dpi) > 0:
+            dpi_x = round(float(raw_dpi), 1)
+            dpi_y = dpi_x
+        return dpi_x, dpi_y, color_mode
+
     def _build_file_record(self, orig_path: Path) -> StudioFileRecord:
         stat = orig_path.stat()
         with Image.open(orig_path) as im:
             orig_w, orig_h = im.size
+            orig_dpi_x, orig_dpi_y, orig_color_mode = self._extract_image_meta(im)
 
         output_path = self.find_output_file(orig_path.stem)
         is_processed = output_path is not None
@@ -390,6 +428,9 @@ class StudioPipeline:
         out_size: Optional[int] = None
         out_w: Optional[int] = None
         out_h: Optional[int] = None
+        out_dpi_x: Optional[float] = None
+        out_dpi_y: Optional[float] = None
+        out_color_mode: Optional[str] = None
 
         preview_path = orig_path
         if output_path is not None:
@@ -400,6 +441,7 @@ class StudioPipeline:
             out_size = out_stat.st_size
             with Image.open(output_path) as out_im:
                 out_w, out_h = out_im.size
+                out_dpi_x, out_dpi_y, out_color_mode = self._extract_image_meta(out_im)
 
         thumb_bytes, thumb_mime = self._create_thumbnail(preview_path)
         return StudioFileRecord(
@@ -419,6 +461,13 @@ class StudioPipeline:
             output_height=out_h,
             thumbnail_bytes=thumb_bytes,
             thumbnail_mime=thumb_mime,
+            dpi_x=orig_dpi_x,
+            dpi_y=orig_dpi_y,
+            color_mode=orig_color_mode,
+            source="workspace",
+            output_dpi_x=out_dpi_x,
+            output_dpi_y=out_dpi_y,
+            output_color_mode=out_color_mode,
         )
 
     def _create_thumbnail(self, image_path: Path) -> Tuple[bytes, str]:
@@ -576,6 +625,42 @@ class StudioPipeline:
 
         zip_bytes = self._cpu_pool.submit(_build_zip).result()
         return zip_bytes, len(files)
+
+    def open_working_dir(self) -> Dict[str, Any]:
+        """Opens working_dir in the host operating system file manager."""
+        self.working_dir.mkdir(parents=True, exist_ok=True)
+        path_str = str(self.working_dir)
+        try:
+            if self._folder_opener is not None:
+                self._folder_opener(self.working_dir)
+            elif sys.platform == "darwin":
+                subprocess.run(
+                    ["/usr/bin/open", path_str],
+                    check=True,
+                    timeout=5,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+            elif sys.platform == "win32":
+                os.startfile(path_str)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(
+                    ["xdg-open", path_str],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            return {"opened": True, "path": path_str, "message": None}
+        except subprocess.CalledProcessError as exc:
+            stderr_msg = ""
+            if exc.stderr:
+                if isinstance(exc.stderr, (bytes, bytearray)):
+                    stderr_msg = exc.stderr.decode("utf-8", errors="replace").strip()
+                else:
+                    stderr_msg = str(exc.stderr).strip()
+            msg = stderr_msg or str(exc)
+            return {"opened": False, "path": path_str, "message": msg}
+        except Exception as exc:
+            return {"opened": False, "path": path_str, "message": str(exc)}
 
     # --- Output Format Resolution & Atomic Saving ---
 
@@ -1009,6 +1094,85 @@ class StudioPipeline:
             return out_rgba
         return composited_rgb
 
+    def _tool_crop(
+        self,
+        image: Image.Image,
+        params: Dict[str, Any],
+        emit_progress: Callable[[str, float], None],
+    ) -> Image.Image:
+        src_w, src_h = image.size
+        crop_vals = (
+            params.get("crop_x"),
+            params.get("crop_y"),
+            params.get("crop_w"),
+            params.get("crop_h"),
+        )
+        if any(v is not None for v in crop_vals):
+            if any(v is None for v in crop_vals):
+                raise PipelineError("crop_x, crop_y, crop_w, and crop_h must all be provided together.")
+            try:
+                cx = float(crop_vals[0])
+                cy = float(crop_vals[1])
+                cw = float(crop_vals[2])
+                ch = float(crop_vals[3])
+            except (TypeError, ValueError) as exc:
+                raise PipelineError("Crop coordinates must be valid numbers.") from exc
+
+            if cx < -1e-6 or cy < -1e-6 or cw <= 0.0 or ch <= 0.0 or cx >= 1.0 or cy >= 1.0:
+                raise PipelineError("Crop coordinates must lie inside [0, 1] with positive size.")
+            cx = max(0.0, min(1.0, cx))
+            cy = max(0.0, min(1.0, cy))
+            cw = max(0.0, min(1.0 - cx, cw))
+            ch = max(0.0, min(1.0 - cy, ch))
+            if cw <= 0.0 or ch <= 0.0:
+                raise PipelineError("Crop region must have positive width and height.")
+
+            crop_w_px = max(1, min(src_w, int(round(cw * src_w))))
+            crop_h_px = max(1, min(src_h, int(round(ch * src_h))))
+            left = max(0, min(src_w - crop_w_px, int(round(cx * src_w))))
+            top = max(0, min(src_h - crop_h_px, int(round(cy * src_h))))
+            right = left + crop_w_px
+            bottom = top + crop_h_px
+            emit_progress("cropping", 55.0)
+            return image.crop((left, top, right, bottom))
+
+        raw_mode = params.get("crop_mode")
+        crop_mode = str(raw_mode).strip().lower() if raw_mode not in (None, "") else ""
+        if crop_mode and crop_mode not in ("keep_aspect", "ratio", "custom"):
+            raise PipelineError("crop_mode must be 'keep_aspect', 'ratio', or 'custom'.")
+
+        raw_w = params.get("width")
+        raw_h = params.get("height")
+        target_w = int(raw_w) if raw_w not in (None, "", 0) else None
+        target_h = int(raw_h) if raw_h not in (None, "", 0) else None
+        if target_w is not None and target_w <= 0:
+            raise PipelineError("Width must be a positive integer.")
+        if target_h is not None and target_h <= 0:
+            raise PipelineError("Height must be a positive integer.")
+
+        if crop_mode == "ratio":
+            rw = target_w or src_w
+            rh = target_h or src_h
+            src_ratio = src_w / src_h
+            target_ratio = rw / rh
+            if src_ratio > target_ratio:
+                crop_h_px = src_h
+                crop_w_px = max(1, min(src_w, int(round(src_h * target_ratio))))
+            else:
+                crop_w_px = src_w
+                crop_h_px = max(1, min(src_h, int(round(src_w / target_ratio))))
+        elif crop_mode == "custom":
+            crop_w_px = min(src_w, target_w) if target_w is not None else src_w
+            crop_h_px = min(src_h, target_h) if target_h is not None else src_h
+        else:
+            crop_w_px = src_w
+            crop_h_px = src_h
+
+        left = (src_w - crop_w_px) // 2
+        top = (src_h - crop_h_px) // 2
+        emit_progress("cropping", 55.0)
+        return image.crop((left, top, left + crop_w_px, top + crop_h_px))
+
     def _tool_resize(
         self,
         image: Image.Image,
@@ -1019,6 +1183,46 @@ class StudioPipeline:
         raw_w = params.get("width")
         raw_h = params.get("height")
         keep_aspect = bool(params.get("keep_aspect", True))
+        raw_fit_mode = params.get("fit_mode")
+        fit_mode = str(raw_fit_mode).strip().lower() if raw_fit_mode not in (None, "") else ""
+
+        if fit_mode and fit_mode not in ("contain", "cover", "stretch"):
+            raise PipelineError("fit_mode must be 'contain', 'cover', or 'stretch'.")
+
+        crop_vals = (
+            params.get("crop_x"),
+            params.get("crop_y"),
+            params.get("crop_w"),
+            params.get("crop_h"),
+        )
+        working_image = image
+        if any(v is not None for v in crop_vals):
+            if any(v is None for v in crop_vals):
+                raise PipelineError("crop_x, crop_y, crop_w, and crop_h must all be provided together.")
+            try:
+                cx = float(crop_vals[0])
+                cy = float(crop_vals[1])
+                cw = float(crop_vals[2])
+                ch = float(crop_vals[3])
+            except (TypeError, ValueError) as exc:
+                raise PipelineError("Crop coordinates must be valid numbers.") from exc
+
+            if cx < -1e-6 or cy < -1e-6 or cw <= 0.0 or ch <= 0.0 or cx >= 1.0 or cy >= 1.0:
+                raise PipelineError("Crop coordinates must lie inside [0, 1] with positive size.")
+            cx = max(0.0, min(1.0, cx))
+            cy = max(0.0, min(1.0, cy))
+            cw = max(0.0, min(1.0 - cx, cw))
+            ch = max(0.0, min(1.0 - cy, ch))
+            if cw <= 0.0 or ch <= 0.0:
+                raise PipelineError("Crop region must have positive width and height.")
+
+            left = max(0, min(src_w - 1, int(round(cx * src_w))))
+            top = max(0, min(src_h - 1, int(round(cy * src_h))))
+            right = max(left + 1, min(src_w, int(round((cx + cw) * src_w))))
+            bottom = max(top + 1, min(src_h, int(round((cy + ch) * src_h))))
+            working_image = image.crop((left, top, right, bottom))
+
+        work_w, work_h = working_image.size
 
         target_w = int(raw_w) if raw_w not in (None, "", 0) else None
         target_h = int(raw_h) if raw_h not in (None, "", 0) else None
@@ -1030,24 +1234,41 @@ class StudioPipeline:
         if target_w is None and target_h is None:
             raise PipelineError("Provide at least one positive dimension (width or height) for resize.")
 
-        if keep_aspect:
+        if fit_mode == "cover":
             if target_w is not None and target_h is not None:
-                ratio = min(target_w / src_w, target_h / src_h)
-                new_w = max(1, int(round(src_w * ratio)))
-                new_h = max(1, int(round(src_h * ratio)))
+                new_w, new_h = target_w, target_h
             elif target_w is not None:
                 new_w = target_w
-                new_h = max(1, int(round(src_h * (target_w / src_w))))
+                new_h = max(1, int(round(work_h * (target_w / work_w))))
             else:
                 assert target_h is not None
                 new_h = target_h
-                new_w = max(1, int(round(src_w * (target_h / src_h))))
+                new_w = max(1, int(round(work_w * (target_h / work_h))))
+            emit_progress("resizing", 55.0)
+            return ImageOps.fit(working_image, (new_w, new_h), method=Image.Resampling.LANCZOS)
+
+        effective_keep_aspect = (
+            True if fit_mode == "contain" else False if fit_mode == "stretch" else keep_aspect
+        )
+
+        if effective_keep_aspect:
+            if target_w is not None and target_h is not None:
+                ratio = min(target_w / work_w, target_h / work_h)
+                new_w = max(1, int(round(work_w * ratio)))
+                new_h = max(1, int(round(work_h * ratio)))
+            elif target_w is not None:
+                new_w = target_w
+                new_h = max(1, int(round(work_h * (target_w / work_w))))
+            else:
+                assert target_h is not None
+                new_h = target_h
+                new_w = max(1, int(round(work_w * (target_h / work_h))))
         else:
-            new_w = target_w if target_w is not None else src_w
-            new_h = target_h if target_h is not None else src_h
+            new_w = target_w if target_w is not None else work_w
+            new_h = target_h if target_h is not None else work_h
 
         emit_progress("resizing", 55.0)
-        return image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        return working_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     # --- Public Processing Entrypoint ---
 
@@ -1080,6 +1301,8 @@ class StudioPipeline:
             result_img, force_alpha_if_auto = self._tool_remove_bg(image, opts, emit)
         elif tool_name == "blur_bg":
             result_img = self._tool_blur_bg(image, opts, emit)
+        elif tool_name == "crop":
+            result_img = self._tool_crop(image, opts, emit)
         elif tool_name == "resize":
             result_img = self._tool_resize(image, opts, emit)
         else:
@@ -1112,7 +1335,7 @@ class StudioPipeline:
         tool_name = (tool or "").strip().lower()
         results: List[StudioFileRecord] = []
 
-        if tool_name == "resize" and total > 1:
+        if tool_name in ("resize", "crop") and total > 1:
             lock = threading.Lock()
             completed = 0
             max_overall = 0.0
