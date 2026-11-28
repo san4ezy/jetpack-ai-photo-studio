@@ -208,6 +208,217 @@ export function computeInitialCanvasScale(
   return computeFitCanvasScale(naturalWidth, naturalHeight, availableWidth, availableHeight);
 }
 
+export interface RectBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface NormalizedVisibleWindow {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  width: number;
+  height: number;
+}
+
+export interface ZoomFocalAnchor {
+  imageX: number;
+  imageY: number;
+  viewportX: number;
+  viewportY: number;
+}
+
+export interface ViewfinderImageState {
+  variant: 'output' | 'original';
+  imageUrl: string;
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+export function computeNormalizedVisibleWindow(
+  viewportVisibleRect: RectBox,
+  contentRect: RectBox
+): NormalizedVisibleWindow {
+  if (
+    viewportVisibleRect.width <= 0 ||
+    viewportVisibleRect.height <= 0 ||
+    contentRect.width <= 0 ||
+    contentRect.height <= 0
+  ) {
+    return { x0: 0, y0: 0, x1: 1, y1: 1, width: 1, height: 1 };
+  }
+
+  const x0 = clampUnit((viewportVisibleRect.left - contentRect.left) / contentRect.width);
+  const x1Raw = clampUnit(
+    (viewportVisibleRect.left + viewportVisibleRect.width - contentRect.left) / contentRect.width
+  );
+  const y0 = clampUnit((viewportVisibleRect.top - contentRect.top) / contentRect.height);
+  const y1Raw = clampUnit(
+    (viewportVisibleRect.top + viewportVisibleRect.height - contentRect.top) / contentRect.height
+  );
+
+  const x1 = Math.max(x0, x1Raw);
+  const y1 = Math.max(y0, y1Raw);
+
+  return {
+    x0,
+    y0,
+    x1,
+    y1,
+    width: x1 - x0,
+    height: y1 - y0,
+  };
+}
+
+export function computeContainedImageRect(
+  boxWidth: number,
+  boxHeight: number,
+  naturalWidth: number,
+  naturalHeight: number
+): RectBox {
+  if (boxWidth <= 0 || boxHeight <= 0) {
+    return { left: 0, top: 0, width: 0, height: 0 };
+  }
+  if (naturalWidth <= 0 || naturalHeight <= 0) {
+    return { left: 0, top: 0, width: boxWidth, height: boxHeight };
+  }
+  const scale = Math.min(boxWidth / naturalWidth, boxHeight / naturalHeight);
+  const width = naturalWidth * scale;
+  const height = naturalHeight * scale;
+  return {
+    left: (boxWidth - width) / 2,
+    top: (boxHeight - height) / 2,
+    width,
+    height,
+  };
+}
+
+export function computeMinimapViewportRect(
+  visibleWindow: NormalizedVisibleWindow,
+  minimapImageRectInContainer: RectBox,
+  minDisplaySize = 10
+): RectBox {
+  const imgW = Math.max(0, minimapImageRectInContainer.width);
+  const imgH = Math.max(0, minimapImageRectInContainer.height);
+  if (imgW <= 0 || imgH <= 0) {
+    return {
+      left: minimapImageRectInContainer.left,
+      top: minimapImageRectInContainer.top,
+      width: 0,
+      height: 0,
+    };
+  }
+
+  const rawLeft = clampUnit(visibleWindow.x0) * imgW;
+  const rawTop = clampUnit(visibleWindow.y0) * imgH;
+  const rawW = clampUnit(visibleWindow.width) * imgW;
+  const rawH = clampUnit(visibleWindow.height) * imgH;
+
+  const dispW = Math.min(imgW, Math.max(minDisplaySize, rawW));
+  const dispH = Math.min(imgH, Math.max(minDisplaySize, rawH));
+
+  const centerX = rawLeft + rawW / 2;
+  const centerY = rawTop + rawH / 2;
+
+  const clampedLeft = Math.max(0, Math.min(imgW - dispW, centerX - dispW / 2));
+  const clampedTop = Math.max(0, Math.min(imgH - dispH, centerY - dispH / 2));
+
+  return {
+    left: minimapImageRectInContainer.left + clampedLeft,
+    top: minimapImageRectInContainer.top + clampedTop,
+    width: dispW,
+    height: dispH,
+  };
+}
+
+export function computeMinimapPanScroll(params: {
+  pointerXInImage: number;
+  pointerYInImage: number;
+  minimapImageWidth: number;
+  minimapImageHeight: number;
+  contentWidth: number;
+  contentHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}): { scrollLeft: number; scrollTop: number } {
+  const {
+    pointerXInImage,
+    pointerYInImage,
+    minimapImageWidth,
+    minimapImageHeight,
+    contentWidth,
+    contentHeight,
+    viewportWidth,
+    viewportHeight,
+  } = params;
+
+  const relX = minimapImageWidth > 0 ? clampUnit(pointerXInImage / minimapImageWidth) : 0.5;
+  const relY = minimapImageHeight > 0 ? clampUnit(pointerYInImage / minimapImageHeight) : 0.5;
+  const maxScrollLeft = Math.max(0, contentWidth - viewportWidth);
+  const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
+
+  return {
+    scrollLeft: Math.max(0, Math.min(maxScrollLeft, relX * contentWidth - viewportWidth / 2)),
+    scrollTop: Math.max(0, Math.min(maxScrollTop, relY * contentHeight - viewportHeight / 2)),
+  };
+}
+
+export function computeAnchoredZoomScroll(params: {
+  anchor: ZoomFocalAnchor;
+  newContentWidth: number;
+  newContentHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}): { scrollLeft: number; scrollTop: number } {
+  const { anchor, newContentWidth, newContentHeight, viewportWidth, viewportHeight } = params;
+  const maxScrollLeft = Math.max(0, newContentWidth - viewportWidth);
+  const maxScrollTop = Math.max(0, newContentHeight - viewportHeight);
+
+  return {
+    scrollLeft: Math.max(
+      0,
+      Math.min(maxScrollLeft, clampUnit(anchor.imageX) * newContentWidth - clampUnit(anchor.viewportX) * viewportWidth)
+    ),
+    scrollTop: Math.max(
+      0,
+      Math.min(maxScrollTop, clampUnit(anchor.imageY) * newContentHeight - clampUnit(anchor.viewportY) * viewportHeight)
+    ),
+  };
+}
+
+export function resolveViewfinderImageState(
+  file:
+    | Pick<StudioFileEntry, 'width' | 'height' | 'is_processed' | 'output_width' | 'output_height'>
+    | null
+    | undefined,
+  preview: Pick<StudioPreviewUrls, 'originalUrl' | 'outputUrl'> | null | undefined
+): ViewfinderImageState | null {
+  if (!file || !preview) return null;
+  if (file.is_processed && preview.outputUrl) {
+    return {
+      variant: 'output',
+      imageUrl: preview.outputUrl,
+      naturalWidth: Math.max(1, file.output_width ?? file.width),
+      naturalHeight: Math.max(1, file.output_height ?? file.height),
+    };
+  }
+  if (!preview.originalUrl) return null;
+  return {
+    variant: 'original',
+    imageUrl: preview.originalUrl,
+    naturalWidth: Math.max(1, file.width),
+    naturalHeight: Math.max(1, file.height),
+  };
+}
+
 export interface StudioFileVersion {
   id: string;
   variant: 'original' | 'output';
@@ -1073,7 +1284,7 @@ export class StudioController {
 
   // --- Worker RPC Operations ---
 
-  public async refreshFiles(): Promise<void> {
+  public async refreshFiles(skipPreviewLoad = false): Promise<void> {
     if (!this.client || !this.client.isConnected()) return;
     const reply = await this.client.request('studio.list_files', null);
     const { meta, binary } = decodeEnvelope<StudioListFilesResult>(reply.payload);
@@ -1100,10 +1311,12 @@ export class StudioController {
     this.syncTransformDefaultsForActiveFile(this.activeFilename !== prevActive);
 
     this.notify();
-    if (this.activeFilename) {
-      await this.loadPreview(this.activeFilename);
-    } else {
-      this.clearPreviewCache();
+    if (!skipPreviewLoad) {
+      if (this.activeFilename) {
+        await this.loadPreview(this.activeFilename);
+      } else {
+        this.clearPreviewCache();
+      }
     }
   }
 
@@ -1269,9 +1482,11 @@ export class StudioController {
       for (const f of meta.processed_files) {
         this.invalidatePreview(f.filename);
       }
-      await this.refreshFiles();
+      await this.refreshFiles(true);
       if (this.activeFilename) {
         await this.loadPreview(this.activeFilename, true);
+      } else {
+        this.clearPreviewCache();
       }
       if (this.selectionMode === 'selecting' && this.selectedOrder.length > 1) {
         await this.preloadSelectedPreviews();
@@ -1294,9 +1509,13 @@ export class StudioController {
     });
     const { meta } = decodeEnvelope<StudioRestoreResult>(reply.payload);
     this.invalidatePreview(filename);
-    await this.refreshFiles();
+    await this.refreshFiles(true);
     if (this.activeFilename === filename) {
       await this.loadPreview(filename, true);
+    } else if (this.activeFilename) {
+      await this.loadPreview(this.activeFilename);
+    } else {
+      this.clearPreviewCache();
     }
     if (meta.restored_count > 0) {
       this.toast(`Restored '${filename}' to original.`);
@@ -1311,7 +1530,7 @@ export class StudioController {
     });
     const { meta } = decodeEnvelope<StudioRestoreResult>(reply.payload);
     this.clearPreviewCache();
-    await this.refreshFiles();
+    await this.refreshFiles(true);
     if (this.activeFilename) {
       await this.loadPreview(this.activeFilename, true);
     }

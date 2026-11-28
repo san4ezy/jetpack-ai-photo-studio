@@ -2,15 +2,23 @@ import './styles.css';
 import type { JetPackAppClient } from '@jetpack-desktop/client';
 import type { JetPackOpcodeMap, StudioFileEntry } from './jetpack-env';
 import {
+  computeAnchoredZoomScroll,
+  computeContainedImageRect,
   computeFitCanvasScale,
+  computeMinimapPanScroll,
+  computeMinimapViewportRect,
+  computeNormalizedVisibleWindow,
   CROP_ASPECT_PRESETS,
+  resolveViewfinderImageState,
   StudioController,
   type CropAspectPresetId,
   type CropMode,
+  type RectBox,
   type ResizeMode,
   type StudioFileVersion,
   type StudioOutputFormat,
   type StudioTool,
+  type ZoomFocalAnchor,
 } from './studio-controller';
 import { connectStudioClient } from './wire';
 
@@ -275,13 +283,13 @@ function bootstrapStudioApp(): void {
   let openVersionFilename: string | null = null;
   let lastToolOptionsKey = '';
   let lastCanvasRenderKey = '';
+  let lastRenderedFilename: string | null = null;
   let currentNaturalWidth = 0;
   let currentNaturalHeight = 0;
-  let currentRenderedWidth = 0;
-  let currentRenderedHeight = 0;
   let currentEffectiveScale = 1;
   let currentMinimapWidth = 0;
   let currentMinimapHeight = 0;
+  let pendingZoomAnchor: ZoomFocalAnchor | null = null;
 
   const closeFileInfoPopover = (): void => {
     fileInfoPopover.hidden = true;
@@ -771,22 +779,129 @@ function bootstrapStudioApp(): void {
     });
   };
 
+  const getViewportAndContentRects = (): { vpVisibleRect: RectBox; contentRect: RectBox } | null => {
+    const frame = canvasContent.querySelector<HTMLElement>('.viewer-frame');
+    if (!frame) return null;
+    const vpRect = canvasViewport.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const vpVisibleWidth = canvasViewport.clientWidth || vpRect.width;
+    const vpVisibleHeight = canvasViewport.clientHeight || vpRect.height;
+    const borderLeft = frame.clientLeft || 0;
+    const borderTop = frame.clientTop || 0;
+    const contentWidth = frame.clientWidth || frameRect.width;
+    const contentHeight = frame.clientHeight || frameRect.height;
+
+    if (vpVisibleWidth <= 0 || vpVisibleHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
+      return null;
+    }
+
+    return {
+      vpVisibleRect: {
+        left: vpRect.left + (canvasViewport.clientLeft || 0),
+        top: vpRect.top + (canvasViewport.clientTop || 0),
+        width: vpVisibleWidth,
+        height: vpVisibleHeight,
+      },
+      contentRect: {
+        left: frameRect.left + borderLeft,
+        top: frameRect.top + borderTop,
+        width: contentWidth,
+        height: contentHeight,
+      },
+    };
+  };
+
+  const getMinimapImageRects = (): {
+    imageClientRect: RectBox;
+    imageInContainerRect: RectBox;
+  } | null => {
+    if (canvasMinimap.hidden) return null;
+    const miniBoxRect = canvasMinimap.getBoundingClientRect();
+    const imgElRect = minimapImg.getBoundingClientRect();
+    if (imgElRect.width <= 0 || imgElRect.height <= 0) return null;
+
+    const natW = minimapImg.naturalWidth || currentNaturalWidth;
+    const natH = minimapImg.naturalHeight || currentNaturalHeight;
+    const contained = computeContainedImageRect(imgElRect.width, imgElRect.height, natW, natH);
+    const imageClientRect: RectBox = {
+      left: imgElRect.left + contained.left,
+      top: imgElRect.top + contained.top,
+      width: contained.width,
+      height: contained.height,
+    };
+
+    const containerPadLeft = miniBoxRect.left + (canvasMinimap.clientLeft || 0);
+    const containerPadTop = miniBoxRect.top + (canvasMinimap.clientTop || 0);
+    const imageInContainerRect: RectBox = {
+      left: imageClientRect.left - containerPadLeft,
+      top: imageClientRect.top - containerPadTop,
+      width: imageClientRect.width,
+      height: imageClientRect.height,
+    };
+
+    return { imageClientRect, imageInContainerRect };
+  };
+
+  const captureZoomAnchor = (clientX?: number, clientY?: number): void => {
+    const rects = getViewportAndContentRects();
+    if (!rects) {
+      pendingZoomAnchor = { imageX: 0.5, imageY: 0.5, viewportX: 0.5, viewportY: 0.5 };
+      return;
+    }
+
+    const { vpVisibleRect, contentRect } = rects;
+    const hasPointer = typeof clientX === 'number' && typeof clientY === 'number';
+    const overflowsX = contentRect.width > vpVisibleRect.width + 1;
+    const overflowsY = contentRect.height > vpVisibleRect.height + 1;
+
+    let viewportX = 0.5;
+    let viewportY = 0.5;
+    if (hasPointer) {
+      if (overflowsX) {
+        viewportX = Math.max(0, Math.min(1, (clientX - vpVisibleRect.left) / vpVisibleRect.width));
+      }
+      if (overflowsY) {
+        viewportY = Math.max(0, Math.min(1, (clientY - vpVisibleRect.top) / vpVisibleRect.height));
+      }
+    }
+
+    const focusClientX = vpVisibleRect.left + viewportX * vpVisibleRect.width;
+    const focusClientY = vpVisibleRect.top + viewportY * vpVisibleRect.height;
+
+    pendingZoomAnchor = {
+      imageX: overflowsX
+        ? Math.max(0, Math.min(1, (focusClientX - contentRect.left) / contentRect.width))
+        : 0.5,
+      imageY: overflowsY
+        ? Math.max(0, Math.min(1, (focusClientY - contentRect.top) / contentRect.height))
+        : 0.5,
+      viewportX,
+      viewportY,
+    };
+  };
+
   const updateMinimapViewportRect = (): void => {
-    if (canvasMinimap.hidden || currentRenderedWidth <= 0 || currentRenderedHeight <= 0) return;
+    if (canvasMinimap.hidden || currentNaturalWidth <= 0 || currentNaturalHeight <= 0) return;
     if (currentMinimapWidth <= 0 || currentMinimapHeight <= 0) return;
 
-    const viewW = canvasViewport.clientWidth || 1;
-    const viewH = canvasViewport.clientHeight || 1;
-    const pad = 3; // matches .canvas-minimap padding
-    const rx = (canvasViewport.scrollLeft / currentRenderedWidth) * currentMinimapWidth;
-    const ry = (canvasViewport.scrollTop / currentRenderedHeight) * currentMinimapHeight;
-    const rw = Math.min(currentMinimapWidth, (viewW / currentRenderedWidth) * currentMinimapWidth);
-    const rh = Math.min(currentMinimapHeight, (viewH / currentRenderedHeight) * currentMinimapHeight);
+    const rects = getViewportAndContentRects();
+    const miniRects = getMinimapImageRects();
+    if (
+      !rects ||
+      !miniRects ||
+      miniRects.imageInContainerRect.width <= 0 ||
+      miniRects.imageInContainerRect.height <= 0
+    ) {
+      return;
+    }
 
-    minimapViewportRect.style.left = `${pad + Math.max(0, Math.min(currentMinimapWidth - rw, rx))}px`;
-    minimapViewportRect.style.top = `${pad + Math.max(0, Math.min(currentMinimapHeight - rh, ry))}px`;
-    minimapViewportRect.style.width = `${Math.max(10, rw)}px`;
-    minimapViewportRect.style.height = `${Math.max(10, rh)}px`;
+    const visibleWindow = computeNormalizedVisibleWindow(rects.vpVisibleRect, rects.contentRect);
+    const box = computeMinimapViewportRect(visibleWindow, miniRects.imageInContainerRect, 10);
+
+    minimapViewportRect.style.left = `${box.left.toFixed(2)}px`;
+    minimapViewportRect.style.top = `${box.top.toFixed(2)}px`;
+    minimapViewportRect.style.width = `${box.width.toFixed(2)}px`;
+    minimapViewportRect.style.height = `${box.height.toFixed(2)}px`;
   };
 
   const updateResizeCropOverlay = (): void => {
@@ -894,6 +1009,7 @@ function bootstrapStudioApp(): void {
       canvasHud.hidden = true;
       canvasMinimap.hidden = true;
       canvasViewport.classList.remove('is-pannable');
+      pendingZoomAnchor = null;
       return;
     }
 
@@ -908,11 +1024,23 @@ function bootstrapStudioApp(): void {
     currentEffectiveScale = scale;
     const renW = Math.max(1, Math.round(currentNaturalWidth * scale));
     const renH = Math.max(1, Math.round(currentNaturalHeight * scale));
-    currentRenderedWidth = renW;
-    currentRenderedHeight = renH;
 
     frame.style.width = `${renW}px`;
     frame.style.height = `${renH}px`;
+
+    if (pendingZoomAnchor) {
+      const anchor = pendingZoomAnchor;
+      pendingZoomAnchor = null;
+      const nextScroll = computeAnchoredZoomScroll({
+        anchor,
+        newContentWidth: canvasViewport.scrollWidth,
+        newContentHeight: canvasViewport.scrollHeight,
+        viewportWidth: canvasViewport.clientWidth,
+        viewportHeight: canvasViewport.clientHeight,
+      });
+      canvasViewport.scrollLeft = nextScroll.scrollLeft;
+      canvasViewport.scrollTop = nextScroll.scrollTop;
+    }
 
     canvasHud.hidden = false;
     zoomPercentReadout.textContent = `${Math.round(scale * 100)}%`;
@@ -927,8 +1055,14 @@ function bootstrapStudioApp(): void {
     btnZoom100.classList.toggle('active', isExact100);
     btnZoomReset.classList.toggle('active', isFitted && !isExact100);
 
-    const overflows = renW > availW + 1 || renH > availH + 1;
-    canvasViewport.classList.toggle('is-pannable', overflows && !frame.classList.contains('compare-box'));
+    const overflows =
+      canvasViewport.scrollWidth > canvasViewport.clientWidth + 1 ||
+      canvasViewport.scrollHeight > canvasViewport.clientHeight + 1;
+    canvasViewport.classList.toggle(
+      'is-pannable',
+      overflows && !frame.classList.contains('compare-box')
+    );
+    const wasMinimapHidden = canvasMinimap.hidden;
     canvasMinimap.hidden = !overflows;
 
     if (overflows) {
@@ -937,9 +1071,13 @@ function bootstrapStudioApp(): void {
       const miniScale = Math.min(maxMiniW / currentNaturalWidth, maxMiniH / currentNaturalHeight);
       currentMinimapWidth = Math.max(36, Math.round(currentNaturalWidth * miniScale));
       currentMinimapHeight = Math.max(28, Math.round(currentNaturalHeight * miniScale));
-      canvasMinimap.style.width = `${currentMinimapWidth + 6}px`;
-      canvasMinimap.style.height = `${currentMinimapHeight + 6}px`;
+      // .canvas-minimap has box-sizing: border-box with 1px border + 3px padding on each side (+8px total)
+      canvasMinimap.style.width = `${currentMinimapWidth + 8}px`;
+      canvasMinimap.style.height = `${currentMinimapHeight + 8}px`;
       updateMinimapViewportRect();
+      if (wasMinimapHidden) {
+        window.requestAnimationFrame(() => updateMinimapViewportRect());
+      }
     }
 
     updateResizeCropOverlay();
@@ -962,6 +1100,8 @@ function bootstrapStudioApp(): void {
       imageOverlayActions.hidden = true;
       currentNaturalWidth = 0;
       currentNaturalHeight = 0;
+      lastRenderedFilename = null;
+      pendingZoomAnchor = null;
       canvasHud.hidden = true;
       canvasMinimap.hidden = true;
 
@@ -1019,6 +1159,8 @@ function bootstrapStudioApp(): void {
       imageOverlayActions.hidden = true;
       currentNaturalWidth = 0;
       currentNaturalHeight = 0;
+      lastRenderedFilename = null;
+      pendingZoomAnchor = null;
       canvasHud.hidden = true;
       canvasMinimap.hidden = true;
       if (lastCanvasRenderKey === 'empty') return;
@@ -1033,7 +1175,13 @@ function bootstrapStudioApp(): void {
     }
 
     const preview = controller.getActivePreview();
-    if (!preview || !preview.originalUrl) {
+    const viewfinder = resolveViewfinderImageState(active, preview);
+    if (!preview || !preview.originalUrl || !viewfinder) {
+      if (lastRenderedFilename === active.filename && controller.canvasZoomMode === 'manual') {
+        captureZoomAnchor();
+      } else if (lastRenderedFilename !== active.filename) {
+        pendingZoomAnchor = null;
+      }
       imageOverlayActions.hidden = true;
       currentNaturalWidth = 0;
       currentNaturalHeight = 0;
@@ -1046,14 +1194,23 @@ function bootstrapStudioApp(): void {
       return;
     }
 
-    if (active.is_processed && preview.outputUrl) {
-      currentNaturalWidth = Math.max(1, active.output_width ?? active.width);
-      currentNaturalHeight = Math.max(1, active.output_height ?? active.height);
+    currentNaturalWidth = viewfinder.naturalWidth;
+    currentNaturalHeight = viewfinder.naturalHeight;
+    if (minimapImg.getAttribute('src') !== viewfinder.imageUrl) {
+      minimapImg.src = viewfinder.imageUrl;
+    }
+
+    if (viewfinder.variant === 'output' && preview.outputUrl) {
       imageOverlayActions.hidden = false;
-      minimapImg.src = preview.outputUrl;
 
       const compareKey = `compare|${active.filename}|${preview.originalUrl}|${preview.outputUrl}`;
       if (lastCanvasRenderKey !== compareKey) {
+        if (lastRenderedFilename === active.filename && controller.canvasZoomMode === 'manual') {
+          if (!pendingZoomAnchor) captureZoomAnchor();
+        } else {
+          pendingZoomAnchor = null;
+        }
+        lastRenderedFilename = active.filename;
         lastCanvasRenderKey = compareKey;
         const pct = controller.sliderPercent;
         canvasContent.innerHTML = `
@@ -1145,13 +1302,16 @@ function bootstrapStudioApp(): void {
       return;
     }
 
-    currentNaturalWidth = Math.max(1, active.width);
-    currentNaturalHeight = Math.max(1, active.height);
     imageOverlayActions.hidden = true;
-    minimapImg.src = preview.originalUrl;
 
     const singleKey = `single|${active.filename}|${preview.originalUrl}`;
     if (lastCanvasRenderKey !== singleKey) {
+      if (lastRenderedFilename === active.filename && controller.canvasZoomMode === 'manual') {
+        if (!pendingZoomAnchor) captureZoomAnchor();
+      } else {
+        pendingZoomAnchor = null;
+      }
+      lastRenderedFilename = active.filename;
       lastCanvasRenderKey = singleKey;
       canvasContent.innerHTML = `
         <div class="single-viewer viewer-frame" id="single-viewer">
@@ -1501,8 +1661,12 @@ function bootstrapStudioApp(): void {
   });
 
   // Zoom controls
-  btnZoomOut.addEventListener('click', () => controller.zoomOut(currentEffectiveScale));
+  btnZoomOut.addEventListener('click', () => {
+    captureZoomAnchor();
+    controller.zoomOut(currentEffectiveScale);
+  });
   btnZoomReset.addEventListener('click', () => {
+    captureZoomAnchor();
     if (currentNaturalWidth > 0 && currentNaturalHeight > 0) {
       const availW = Math.max(120, canvasViewport.clientWidth - 4);
       const availH = Math.max(120, canvasViewport.clientHeight - 4);
@@ -1511,8 +1675,14 @@ function bootstrapStudioApp(): void {
       controller.resetZoom();
     }
   });
-  btnZoom100.addEventListener('click', () => controller.setZoomExact(1));
-  btnZoomIn.addEventListener('click', () => controller.zoomIn(currentEffectiveScale));
+  btnZoom100.addEventListener('click', () => {
+    captureZoomAnchor();
+    controller.setZoomExact(1);
+  });
+  btnZoomIn.addEventListener('click', () => {
+    captureZoomAnchor();
+    controller.zoomIn(currentEffectiveScale);
+  });
 
   // Ctrl/Cmd + Wheel zoom on preview stage
   previewStage.addEventListener(
@@ -1521,6 +1691,7 @@ function bootstrapStudioApp(): void {
       if (!(ev.ctrlKey || ev.metaKey)) return;
       if (currentNaturalWidth <= 0) return;
       ev.preventDefault();
+      captureZoomAnchor(ev.clientX, ev.clientY);
       if (ev.deltaY < 0) {
         controller.zoomIn(currentEffectiveScale);
       } else if (ev.deltaY > 0) {
@@ -1532,15 +1703,26 @@ function bootstrapStudioApp(): void {
 
   // Minimap click & drag navigation
   const panFromMinimapPointer = (clientX: number, clientY: number): void => {
-    if (currentMinimapWidth <= 0 || currentMinimapHeight <= 0) return;
-    const rect = canvasMinimap.getBoundingClientRect();
-    const pad = 3;
-    const relX = Math.max(0, Math.min(1, (clientX - rect.left - pad) / currentMinimapWidth));
-    const relY = Math.max(0, Math.min(1, (clientY - rect.top - pad) / currentMinimapHeight));
-    const viewW = canvasViewport.clientWidth;
-    const viewH = canvasViewport.clientHeight;
-    canvasViewport.scrollLeft = Math.max(0, relX * currentRenderedWidth - viewW / 2);
-    canvasViewport.scrollTop = Math.max(0, relY * currentRenderedHeight - viewH / 2);
+    const miniRects = getMinimapImageRects();
+    if (
+      !miniRects ||
+      miniRects.imageClientRect.width <= 0 ||
+      miniRects.imageClientRect.height <= 0
+    ) {
+      return;
+    }
+    const targetScroll = computeMinimapPanScroll({
+      pointerXInImage: clientX - miniRects.imageClientRect.left,
+      pointerYInImage: clientY - miniRects.imageClientRect.top,
+      minimapImageWidth: miniRects.imageClientRect.width,
+      minimapImageHeight: miniRects.imageClientRect.height,
+      contentWidth: canvasViewport.scrollWidth,
+      contentHeight: canvasViewport.scrollHeight,
+      viewportWidth: canvasViewport.clientWidth,
+      viewportHeight: canvasViewport.clientHeight,
+    });
+    canvasViewport.scrollLeft = targetScroll.scrollLeft;
+    canvasViewport.scrollTop = targetScroll.scrollTop;
     updateMinimapViewportRect();
   };
 
@@ -1555,10 +1737,13 @@ function bootstrapStudioApp(): void {
     if (!draggingMinimap) return;
     panFromMinimapPointer(ev.clientX, ev.clientY);
   });
-  canvasMinimap.addEventListener('pointerup', () => {
+  const stopMinimapDrag = () => {
     draggingMinimap = false;
-  });
+  };
+  canvasMinimap.addEventListener('pointerup', stopMinimapDrag);
+  canvasMinimap.addEventListener('pointercancel', stopMinimapDrag);
 
+  minimapImg.addEventListener('load', updateMinimapViewportRect);
   canvasViewport.addEventListener('scroll', updateMinimapViewportRect);
 
   if (typeof ResizeObserver !== 'undefined') {
@@ -1566,6 +1751,7 @@ function bootstrapStudioApp(): void {
       updateCanvasGeometry();
     });
     stageObserver.observe(previewStage);
+    stageObserver.observe(canvasViewport);
   } else {
     window.addEventListener('resize', updateCanvasGeometry);
   }

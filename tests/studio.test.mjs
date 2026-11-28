@@ -7,11 +7,17 @@ import {
 } from '/tmp/ai-photo-studio-test/codec.js';
 import {
   clampCropRect,
+  computeAnchoredZoomScroll,
   computeCenteredCropRect,
+  computeContainedImageRect,
   computeFitCanvasScale,
   computeInitialCanvasScale,
   computeMaxCropPixelDimensions,
+  computeMinimapPanScroll,
+  computeMinimapViewportRect,
+  computeNormalizedVisibleWindow,
   CROP_ASPECT_PRESETS,
+  resolveViewfinderImageState,
   StudioController,
 } from '/tmp/ai-photo-studio-test/studio-controller.js';
 
@@ -508,3 +514,158 @@ test('openProjectFolder copies path to clipboard with Cmd+Shift+G hint when sand
   assert.ok(notifications[0].message.includes(client.openFolderResult.path));
 });
 
+test('minimap geometry aligns centered, edge, high-zoom min-size, single-axis, and letterboxed viewports', () => {
+  // 1. User sees the exact center of a 2000x1600 image in an 800x600 viewport (content offset = -600, -500)
+  const centeredWindow = computeNormalizedVisibleWindow(
+    { left: 100, top: 50, width: 800, height: 600 },
+    { left: 100 - 600, top: 50 - 500, width: 2000, height: 1600 }
+  );
+  assert.ok(Math.abs(centeredWindow.x0 - 0.3) < 1e-6);
+  assert.ok(Math.abs(centeredWindow.x1 - 0.7) < 1e-6);
+  assert.ok(Math.abs(centeredWindow.y0 - 0.3125) < 1e-6);
+  assert.ok(Math.abs(centeredWindow.y1 - 0.6875) < 1e-6);
+
+  const miniBox = { left: 3, top: 3, width: 120, height: 96 };
+  const centeredRect = computeMinimapViewportRect(centeredWindow, miniBox, 10);
+  const rectCenterX = centeredRect.left + centeredRect.width / 2;
+  const miniCenterX = miniBox.left + miniBox.width / 2;
+  assert.ok(Math.abs(rectCenterX - miniCenterX) < 1e-6);
+  assert.ok(Math.abs(centeredRect.width - 48) < 1e-6);
+
+  // 2. High zoom (raw width < 10px) stays centered rather than shifting right, and clamps cleanly at right edge
+  const tinyCenterWin = computeNormalizedVisibleWindow(
+    { left: 0, top: 0, width: 200, height: 200 },
+    { left: -2400, top: -2400, width: 5000, height: 5000 }
+  );
+  const tinyRect = computeMinimapViewportRect(tinyCenterWin, { left: 3, top: 3, width: 100, height: 100 }, 10);
+  assert.equal(tinyRect.width, 10);
+  assert.ok(Math.abs((tinyRect.left + tinyRect.width / 2) - 53) < 1e-6);
+
+  const tinyRightEdgeWin = computeNormalizedVisibleWindow(
+    { left: 0, top: 0, width: 200, height: 200 },
+    { left: -4800, top: -4800, width: 5000, height: 5000 }
+  );
+  const rightEdgeRect = computeMinimapViewportRect(tinyRightEdgeWin, { left: 3, top: 3, width: 100, height: 100 }, 10);
+  assert.equal(rightEdgeRect.width, 10);
+  assert.equal(rightEdgeRect.left + rightEdgeRect.width, 103);
+
+  // 3. Single-axis vertical overflow with horizontally centered frame
+  const verticalOnlyWin = computeNormalizedVisibleWindow(
+    { left: 0, top: 0, width: 800, height: 600 },
+    { left: 150, top: -300, width: 500, height: 1200 }
+  );
+  assert.equal(verticalOnlyWin.x0, 0);
+  assert.equal(verticalOnlyWin.x1, 1);
+  assert.equal(verticalOnlyWin.y0, 0.25);
+  assert.equal(verticalOnlyWin.y1, 0.75);
+
+  // 4. Letterboxed minimap thumbnail (narrow 200x2000 image in 36x92 container)
+  const contained = computeContainedImageRect(36, 92, 200, 2000);
+  assert.ok(Math.abs(contained.width - 9.2) < 1e-6);
+  assert.equal(contained.height, 92);
+  assert.ok(Math.abs(contained.left - (36 - 9.2) / 2) < 1e-6);
+});
+
+test('minimap pan and focal zoom scroll keep viewed area synchronized', () => {
+  // Clicking center of minimap centers viewport scroll
+  const centerPan = computeMinimapPanScroll({
+    pointerXInImage: 60,
+    pointerYInImage: 45,
+    minimapImageWidth: 120,
+    minimapImageHeight: 90,
+    contentWidth: 2000,
+    contentHeight: 1500,
+    viewportWidth: 800,
+    viewportHeight: 600,
+  });
+  assert.equal(centerPan.scrollLeft, 600);
+  assert.equal(centerPan.scrollTop, 450);
+
+  // Zooming in from center keeps image center at viewport center
+  const zoomInCenter = computeAnchoredZoomScroll({
+    anchor: { imageX: 0.5, imageY: 0.5, viewportX: 0.5, viewportY: 0.5 },
+    newContentWidth: 3000,
+    newContentHeight: 2250,
+    viewportWidth: 800,
+    viewportHeight: 600,
+  });
+  assert.equal(zoomInCenter.scrollLeft, 1100);
+  assert.equal(zoomInCenter.scrollTop, 825);
+
+  // Zooming out from center also keeps center rather than clamping to right edge
+  const zoomOutCenter = computeAnchoredZoomScroll({
+    anchor: { imageX: 0.5, imageY: 0.5, viewportX: 0.5, viewportY: 0.5 },
+    newContentWidth: 1600,
+    newContentHeight: 1200,
+    viewportWidth: 800,
+    viewportHeight: 600,
+  });
+  assert.equal(zoomOutCenter.scrollLeft, 400);
+  assert.equal(zoomOutCenter.scrollTop, 300);
+
+  // Wheel zoom anchored at pointer (viewport 25%, image 30%) preserves point under cursor
+  const wheelAnchored = computeAnchoredZoomScroll({
+    anchor: { imageX: 0.3, imageY: 0.4, viewportX: 0.25, viewportY: 0.5 },
+    newContentWidth: 2000,
+    newContentHeight: 1500,
+    viewportWidth: 800,
+    viewportHeight: 600,
+  });
+  assert.equal(wheelAnchored.scrollLeft, 400);
+  assert.equal(wheelAnchored.scrollTop, 300);
+});
+
+test('resolveViewfinderImageState and StudioController always track latest processed image across re-process and restore', async () => {
+  const client = new MockStudioClient([makeFileEntry('photo.png', false)]);
+  let urlSeq = 0;
+  const ctrl = new StudioController({
+    createObjectUrl: (bytes, mime) => `blob:${++urlSeq}:${mime}:${bytes.byteLength}`,
+    revokeObjectUrl: () => {},
+  });
+  ctrl.setClient(client);
+  await ctrl.refreshFiles();
+
+  // Before processing: uses original
+  let vf = resolveViewfinderImageState(ctrl.activeFile, ctrl.getActivePreview());
+  assert.equal(vf?.variant, 'original');
+  assert.equal(vf?.naturalWidth, 640);
+  assert.equal(vf?.naturalHeight, 480);
+  const origUrl = vf?.imageUrl;
+
+  // After processing: uses outputUrl and output dimensions
+  await ctrl.processCurrent();
+  vf = resolveViewfinderImageState(ctrl.activeFile, ctrl.getActivePreview());
+  assert.equal(vf?.variant, 'output');
+  assert.equal(vf?.naturalWidth, 1280);
+  assert.equal(vf?.naturalHeight, 960);
+  const firstOutUrl = vf?.imageUrl;
+  assert.notEqual(firstOutUrl, origUrl);
+
+  // Simulate re-processing with new output dimensions (e.g. Crop/Resize after Upscale)
+  const prevRequest = client.request.bind(client);
+  client.request = async (opcode, meta, binary) => {
+    const res = await prevRequest(opcode, meta, binary);
+    if (opcode === 'studio.process') {
+      client.files = client.files.map((f) =>
+        f.filename === 'photo.png'
+          ? { ...f, is_processed: true, output_width: 900, output_height: 900 }
+          : f
+      );
+    }
+    return res;
+  };
+  await ctrl.processCurrent();
+  vf = resolveViewfinderImageState(ctrl.activeFile, ctrl.getActivePreview());
+  assert.equal(vf?.variant, 'output');
+  assert.equal(vf?.naturalWidth, 900);
+  assert.equal(vf?.naturalHeight, 900);
+  assert.notEqual(vf?.imageUrl, firstOutUrl);
+
+  // Restore reverts viewfinder back to original image and dimensions
+  client.request = prevRequest;
+  await ctrl.restoreSingle('photo.png');
+  vf = resolveViewfinderImageState(ctrl.activeFile, ctrl.getActivePreview());
+  assert.equal(vf?.variant, 'original');
+  assert.equal(vf?.naturalWidth, 640);
+  assert.equal(vf?.naturalHeight, 480);
+});
