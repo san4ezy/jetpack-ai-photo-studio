@@ -1,0 +1,29 @@
+{
+  "app_id": "dev.codingbro.ai-photo-studio",
+  "name": "JetPack: AI Photo Studio",
+  "description": "Autonomous local AI Photo Studio: upscale, detail enhance, background removal, portrait blur, resize, and non-destructive batch pipeline.",
+  "category": "Media",
+  "icon_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\"/><path d=\"M9 9h6v6H9z\"/></svg>",
+  "oci_reference": "ghcr.io/san4ezy/ai-photo-studio:0.1.0",
+  "manifest_sha256": "sha256:f8f8b4391c23c01d2ca16056f01b47fc592e67a2331c1a8362c0bd6550f6659d",
+  "min_vram_mb": 0,
+  "supported_platforms": [
+    "darwin/arm64",
+    "linux/amd64",
+    "windows/amd64"
+  ],
+  "accelerators": [
+    "Metal",
+    "NvmlCuda",
+    "Cpu"
+  ],
+  "allowed_origins": [
+    "https://jetpack-ai-photo-studio.vercel.app"
+  ],
+  "launch_url": "https://jetpack-ai-photo-studio.vercel.app",
+  "poster_url": "https://jetpack-ai-photo-studio.vercel.app/poster.webp",
+  "version": "0.1.0",
+  "min_ram_gb": 2.0,
+  "requires_volumes": false,
+  "coming_soon": false
+}
